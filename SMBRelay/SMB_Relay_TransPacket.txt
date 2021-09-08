@@ -1,0 +1,41 @@
+case SMB_COM_TRANSACTION:
+		TransRequest=(SMB_COM_TRANSACTION_STRUCT *)malloc(sizeof(SMB_COM_TRANSACTION_STRUCT));
+		memset((char*)TransRequest,'\0',sizeof(SMB_COM_TRANSACTION_STRUCT));
+		NewSmbPacket->TreeId=((smheader *)PreviousSmbMessage)->TreeId;
+		TransRequest->WordCount=16;
+		TransRequest->TotalParameterCount=0 ;
+		TransRequest->MaxDataCount=1024;
+		TransRequest->MaxParameterCount=0;
+		TransRequest->MaxSetupCount=0;
+		TransRequest->reserved=0;
+		TransRequest->flags=0;
+		TransRequest->timeout=0x00000000;
+		TransRequest->reserved2=0;
+		TransRequest->ParameterCount=0;
+		TransRequest->ParameterOffset=84;
+		TransRequest->DataOffset=84;
+		TransRequest->SetupCount=2; 
+		TransRequest->reserved3=0;
+
+        TransRequest->Function=0x26; //TRANSACT Named PIPE
+		TransRequest->padding=0;		
+		memcpy((char*)TransRequest->TransactionName,"\x5c\x00\x50\x00\x49\x00\x50\x00\x45\x00\x5c\x00\x00\x00",14);
+		TransRequest->padding2=0;
+
+
+        //--------
+
+        NewSmbPacket->SmbMessageLength=(uint16)SREV (sizeof(smheader)-sizeof(NewSmbPacket->buffer) +sizeof(SMB_COM_TRANSACTION_STRUCT) + sizeof(DceRpcRequest) + DataSize -4);	
+        TransRequest->TotalDataCount=(uint16)sizeof(DceRpcRequest) + DataSize;//sizeof(MSCStruct) + (uint16) (strlen((char*)data)+1)*sizeof(WCHAR) + 2*((((int)strlen((char*)data)+1)%2) ==1)  ;	
+		TransRequest->DataCount=TransRequest->TotalDataCount;				
+		TransRequest->ByteCount=TransRequest->TotalDataCount + 17; 					
+		dcerpc->FragmentLength=TransRequest->TotalDataCount;					
+        //dcerpc->AllocHint=sizeof(DceRpcRequest) +DataSize; //Changed 10, Sept
+		dcerpc->AllocHint=DataSize; 
+
+		memcpy(NewSmbPacket->buffer,(char*)TransRequest,sizeof(SMB_COM_TRANSACTION_STRUCT));
+		memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT),(char*)dcerpc,sizeof(DceRpcRequest));
+        memcpy(NewSmbPacket->buffer+sizeof(SMB_COM_TRANSACTION_STRUCT) +sizeof(DceRpcRequest),(char*)data,DataSize);
+        free(TransRequest);
+		free(dcerpc);
+		break;
