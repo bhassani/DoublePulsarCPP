@@ -203,6 +203,21 @@ int BuildTreeConnectAndXStub(char *destination,char *password, char *resource, c
 //SMB Negotiation
 char *AddDialect(char *data, char *name, uint8 type, int *PacketSize);
 
+char *AddDialect(char *data, char *name, uint8 type, int *PacketSize) {
+
+    if (!data) {
+        *PacketSize=0;
+        data=(char*)malloc(strlen(name)+2);
+    } else {
+        data=(char*)realloc(data, *PacketSize +2 + strlen(name));
+    }
+    //printf("PacketSize vale: %i\n",*PacketSize);
+    data[*PacketSize]=type;
+    strcpy((char*)&data[*PacketSize+1],name);
+    *PacketSize+=2+strlen(name);
+    return(data);
+}
+
 smheader *buildDoublePulsarPingPacket()
 {
 	TransRequest=(SMB_COM_TRANSACTION_STRUCT *)malloc(sizeof(SMB_COM_TRANSACTION_STRUCT));
