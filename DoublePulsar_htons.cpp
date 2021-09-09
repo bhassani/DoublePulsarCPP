@@ -327,10 +327,14 @@ int main(int argc, char* argv[])
   
   //edit more data here with htons
   
-  big_packet = htons();
-  big_packet = htons();
-  big_packet = htons();
-  big_packet = htons();
+  byteCount = htons(4096+12);
+  big_packet[WHERE_byteCount is in the packet] = byteCount;
+	
+  TotalDataCount = htons(4096+12);
+  big_packet[WHERE TotalDataCount is in the packet] = TotalDataCount;
+	
+  DataCount = htons(4096);
+  big_packet[WHERE DataCount is in the packet] =  DataCount;
   
   /*
   DoublePUlsar last packet where the value is dynamic
