@@ -4,7 +4,10 @@ WARNING: This code works for me as of March 7th 2021 but it BSODS the target
 
 It could be because my kernel shellcode doesn't contain the payload shellcode length after it
 
-11/8/2021: Added code to attach the shellcode length after the kernel shellcode.
+11/8/2021: Added code to attach the shellcode length after the kernel shellcode
+9/9/2021: Added code to update values in the trans2_exec packet with htons.  
+
+Values will change based on: totalDataCount, totalByteCount, DataCount.  etc
 */
 
 #include <windows.h>
