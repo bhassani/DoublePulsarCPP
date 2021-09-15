@@ -29,6 +29,8 @@ typedef struct _smb_header {
 
 } SMB_HEADER;
 
+#pragma pack(pop)
+
 void main()
 {
   
