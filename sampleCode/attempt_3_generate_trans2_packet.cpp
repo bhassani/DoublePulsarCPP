@@ -78,8 +78,8 @@ void main()
 	
 	
 	//memset after NetBIOS header & SMB Header with 0x90 for 3000 bytes
-	MAX_SMB_LEN = 4224; //find the correct max value
-	bytesLeftInBuffer = MAX_SMB_LEN;
+	int MAX_SMB_LEN = 4204;
+	int bytesLeftInBuffer = MAX_SMB_LEN;
 	bytesLeftInBuffer -= sizeof(NETBIOS_HEADER) + sizeof(SMB_HEADER) + sizeof(TRANS2_DOUBLEPULSAR);
 
 	//memset parameters
