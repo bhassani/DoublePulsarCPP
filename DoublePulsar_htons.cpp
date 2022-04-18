@@ -343,15 +343,24 @@ int main(int argc, char* argv[])
   big_packet[3] = htons(total_size_of_packet);
   
   //edit more data here with htons
-  
-  byteCount = htons(4096+12);
-  big_packet[WHERE_byteCount is in the packet] = byteCount;
-	
-  TotalDataCount = htons(4096+12);
-  big_packet[WHERE TotalDataCount is in the packet] = TotalDataCount;
-	
+
+  TotalDataCount = htons(4096+13);
   DataCount = htons(4096);
-  big_packet[WHERE DataCount is in the packet] =  DataCount;
+  byteCount = htons(4096+13);
+
+  big_packet[0x27] = TotalDataCount;
+  big_packet[0x3b] =  DataCount;
+  big_packet[0x45] = byteCount;
+
+  memcpy(big_packet + 0x27, (char*)&TotalDataCount, 2);
+  memcpy(big_packet + 0x3b, (char*)&DataCount, 2);
+  memcpy(big_packet + 0x45, (char*)&byteCount, 2);
+
+  /* Different way?
+  *(WORD *)(big_packet+0x27)=TotalDataCount;  //update Total Data Count
+  *(WORD *)(big_packet+0x3b)=DataCount;  //update Data Count
+  *(WORD *)(big_packet+0x45)=byteCount;  //update Byte Count
+  */
   
   /*
   DoublePUlsar last packet where the value is dynamic
